@@ -1,0 +1,734 @@
+#  INTRODUCTION :
+
+# Machine learning is a big challenge it requires a lot mathematics,skills, time and patience, in this project we are going to analyze and try to predict a hospital death based on different predictors and different algorithms (glm , knn , random forest , rpart), the principal objective is to reduce the Rmse (an stadistic formula that measures the amount of error between two sets of data ), the data comes from a page called kaggle and the creator and owner of the information you can find it in the following link .
+
+# https://www.kaggle.com/mitishaagarwal/patient.
+
+
+# Loading and downloading all the packages from R that we are going to use in this project.
+
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(randomForest)) install.packages("randomForest", repos = "http://cran.us.r-project.org")
+if(!require(rpart)) install.packages("rpart", repos = "http://cran.us.r-project.org")
+if(!require(rpart.plot)) install.packages("rpart.plot", repos = "http://cran.us.r-project.org")
+if(!require(ranger)) install.packages("ranger", repos = "http://cran.us.r-project.org")
+if(!require(class)) install.packages("class", repos = "http://cran.us.r-project.org")
+if(!require(gam)) install.packages("gam", repos = "http://cran.us.r-project.org")
+if(!require(splines)) install.packages("splines", repos = "http://cran.us.r-project.org")
+if(!require(foreach)) install.packages("foreach", repos = "http://cran.us.r-project.org")
+if(!require(MASS)) install.packages("MASS", repos = "http://cran.us.r-project.org")
+if(!require(C50)) install.packages("C50", repos = "http://cran.us.r-project.org")
+
+
+library(tidyverse)
+library(caret)
+library(data.table)
+library(lubridate)
+library(randomForest)
+library(dslabs)
+library(rpart)
+library(rpart.plot)
+library(ranger)
+library(class)
+library(MASS)
+library(gam)
+library(splines)
+library(foreach)
+library(C50)
+
+
+# Methods/analysis :
+
+# Downloading the csv data and reading into a data frame.
+
+
+Survival_Prediction <-read.csv('https://www.dropbox.com/s/angh53kkzc4awo6/dataset.csv?dl=1')
+
+# Now first we look at the data from the package with the function head(), it will illustrate what it contains the columns names and the type of data inside.
+head(Survival_Prediction)
+
+# We notice that there is a column called X in the data frame which most of the data is NA, we clean the data from any NA value.
+
+Survival_Prediction  <- Survival_Prediction[,-84]
+
+
+Survival_Prediction <- Survival_Prediction %>%
+  drop_na()
+
+sum(is.na(Survival_Prediction$age))
+
+
+
+  # We also notice that there is a lot of specificity in the height , weight and the temperature, It will not be very helpful to have the data like this since when grouping them there would be many groups of a single value and the analysis would be much more difficult, we round the values to the nearest integer.
+
+
+Survival_Prediction$height <- round(Survival_Prediction$height)
+
+Survival_Prediction$weight <- round(Survival_Prediction$weight)
+
+Survival_Prediction$temp_apache <- round(Survival_Prediction$temp_apache)
+
+Survival_Prediction$d1_temp_min   <- round(Survival_Prediction$d1_temp_min  )
+
+Survival_Prediction$d1_temp_max    <- round(Survival_Prediction$d1_temp_max   )
+
+# Due to data visualization problems we have decided to create a special variable. 
+
+Survival_Prediction_vi <- Survival_Prediction
+
+
+# Some columns has binary data or specific groups, so we decide to convert it to a factor variable.
+
+Survival_Prediction$hospital_death <- as.factor(Survival_Prediction$hospital_death) 
+Survival_Prediction$gcs_eyes_apache <- as.factor(Survival_Prediction$gcs_eyes_apache)
+Survival_Prediction$gcs_motor_apache <- as.factor(Survival_Prediction$gcs_motor_apache)
+Survival_Prediction$gcs_verbal_apache <- as.factor(Survival_Prediction$gcs_verbal_apache)
+Survival_Prediction$intubated_apache <- as.factor(Survival_Prediction$intubated_apache)
+Survival_Prediction$aids <- as.factor(Survival_Prediction$aids)
+Survival_Prediction$cirrhosis <- as.factor(Survival_Prediction$cirrhosis)
+Survival_Prediction$solid_tumor_with_metastasis <- as.factor(Survival_Prediction$solid_tumor_with_metastasis)
+
+set.seed(1) # if using R 3.5 or earlier, use `set.seed(1)`
+
+
+
+
+# We are going to split the data in two parts one for training the algorithm (90%), and another to validate the results (10%).
+
+test_index <- createDataPartition(y = Survival_Prediction$hospital_death, times = 1, p = 0.1, list = FALSE)
+edx <- Survival_Prediction[-test_index,]
+temp <- Survival_Prediction[test_index,]
+
+validation <- temp %>% 
+  semi_join(edx, by = "hospital_death")
+
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+
+
+# We are only going to use the EDX set to realize all the machine learning work, so the EDX data set is going to be splitted  on a train set (90%) and a test set (10%).
+
+test_index <- createDataPartition(y = edx$hospital_death, times = 1, p = 0.1, list = FALSE)
+edx_train <- edx[-test_index,]
+temp <- edx[test_index,]
+
+edx_test <- temp %>% 
+  semi_join(edx, by = "hospital_death") 
+
+removed <- anti_join(temp, edx_test)
+edx_train <- rbind(edx_train, removed)
+
+
+# The data has 84 columns,  trying to explore all of theses columns might take a lot time, so we are only going to use a few columns more flashy. 
+ncol(edx_train)
+
+
+# some columns has the label Apache that is an acronym for Acute Physiology and Chronic Health Evaluation, It is applied within 24 hours of admission of a patient to an intensive care unit (ICU).
+
+colnames(edx_train)
+
+
+# In this project we are going to use some machine learning algorithms, to analyze and use the algorithms we need to understand how they work.
+
+# Random forest is a supervised machine learning algorithm that uses ensemble learning method for regression, 'the idea of random forests is to generate many predictors, each using regression or classification trees, and then forming a final prediction based on the average prediction of all these trees'.
+
+# C5.0 model works by splitting the sample based on the field that provides the maximum information gain. Each sub-sample defined by the first split is then split again, usually based on a different field, and the process repeats until the sub samples cannot be split any further. Finally, the lowest-level splits are reexamined.
+
+# Generalized Additive Model using LOESS
+
+# The additive model generalizes the linear model by modeling the expected value of Y as
+# E(Y) = f(X1 ..... Xp) = s0 + s1(X1) + ...... + sp(Xp)
+# where si(X), i = 1 ...... p , are smooth functions. These functions are estimated in a nonparametric fashion.
+
+
+# Exploring the data the first intuition that we had was that the probability of death of a older person was greater than a young, so we plot the mean hospital death grouped by the age.
+
+Survival_Prediction_vi %>%
+  group_by(age) %>%
+  summarize(prob = mean(hospital_death), age =  mean(age)) %>%
+  ggplot(aes(age, prob)) +
+  geom_point() +
+  geom_smooth()
+
+
+# randomForest() function allows us to run Random Forest Regression.
+# Testing the age on the random forest algorithm.
+
+fit_rf <- randomForest(hospital_death ~ age, data = edx_train)
+
+plot(fit_rf)
+
+y_hat_rf <- predict(fit_rf, edx_test)
+
+mean(edx_test$hospital_death == y_hat_rf)
+
+sum(y_hat_rf == 1)
+
+
+# train() function with method = 'C5.0Tree' parameter allows us to run C5.0Tree algorithm.
+# Testing the first model C5.0Tree.
+
+fit_ct <- train(hospital_death ~ age, data = edx_train, method = 'C5.0Tree' )
+
+y_hat_ct <- predict(fit_ct, edx_test)
+
+mean(edx_test$hospital_death == y_hat_ct)
+
+sum(y_hat_ct == 1)
+
+
+# train() function with method = 'gamLoess' parameter allows us to run gamLoess algorithm.
+# Testing the first model gamLoess.
+
+fit_gam <- train(hospital_death ~ age, data = edx_train, method = 'gamLoess' )
+
+y_hat_gam <- predict(fit_gam, edx_test)
+
+mean(edx_test$hospital_death == y_hat_gam)
+
+sum(y_hat_gam == 1)
+
+
+#a person's temperature can be a great indication of risk of death especially when entering intensive care.
+
+Survival_Prediction_vi %>%
+  group_by(temp_apache ) %>%
+  summarize(temp_apache  = mean(temp_apache , na.rm = TRUE),hospital_death = mean(hospital_death , na.rm = TRUE)) %>%
+  ggplot(aes(temp_apache , hospital_death )) +
+  geom_col()
+
+# as we can see the lower the temperature that a body has, the more risk of death there is.
+
+# Testing the temp_apache on the random forest algorithm.
+
+fit_rf <- randomForest(hospital_death ~ age + temp_apache , data = edx_train) 
+
+plot(fit_rf)
+
+y_hat_rf <- predict(fit_rf, edx_test)
+
+mean(edx_test$hospital_death == y_hat_rf)
+
+sum(y_hat_rf == 1)
+
+# Testing the temp_apache on the C5.0Tree algorithm.
+
+fit_ct <- train(hospital_death ~ age + temp_apache , data = edx_train , method = 'C5.0Tree')
+
+y_hat_ct <- predict(fit_ct, edx_test)
+
+mean(edx_test$hospital_death == y_hat_ct)
+
+sum(y_hat_ct == 1)
+
+
+# Testing the temp_apache on the gamLoess algorithm.
+
+fit_gam <- train(hospital_death ~ age  + temp_apache ,  data = edx_train, method = 'gamLoess' )
+
+y_hat_gam <- predict(fit_gam, edx_test)
+
+mean(edx_test$hospital_death == y_hat_gam)
+
+sum(y_hat_gam == 1)
+
+
+# our intuition says that people who enter the mechanical ventilation area are more likely to die.
+
+Survival_Prediction_vi %>%
+  group_by(ventilated_apache ) %>%
+  summarize(ventilated_apache  = mean(ventilated_apache , na.rm = TRUE),hospital_death = mean(hospital_death , na.rm = TRUE)) %>%
+  ggplot(aes(ventilated_apache ,hospital_death  )) +
+  geom_col()
+
+# The data is binary, where 1 one is this with mechanical ventilation and 0 is the opposite
+
+#  Analyzing the graph, we realize that people who actually enter mechanical ventilation have a greater chance of dying.
+
+#Testing the ventilated_apache on the random forest algorithm.
+
+fit_rf <- randomForest(hospital_death ~ age  + ventilated_apache + temp_apache , data = edx_train) 
+
+y_hat_rf <- predict(fit_rf, edx_test)
+
+mean(edx_test$hospital_death == y_hat_rf)
+
+sum(y_hat_rf == 1)
+
+#Testing the ventilated_apache on the C5.0Tree  algorithm.
+
+fit_ct <- train(hospital_death ~ age  + ventilated_apache + temp_apache , data = edx_train, method = 'C5.0Tree' )
+
+y_hat_ct <- predict(fit_ct, edx_test)
+
+mean(edx_test$hospital_death == y_hat_ct)
+
+sum(y_hat_ct == 1)
+
+
+#Testing the ventilated_apache on the gamLoess algorithm.
+
+fit_gam <- train(hospital_death ~ age  + temp_apache + ventilated_apache        ,  data = edx_train, method = 'gamLoess' )
+
+y_hat_gam <- predict(fit_gam, edx_test)
+
+mean(edx_test$hospital_death == y_hat_gam)
+
+sum(y_hat_gam == 1)
+
+
+
+# diasbp is an acronym of Diastolic blood pressure.
+
+# can the diastolic blood pressure have an effect on the death of a person?
+
+Survival_Prediction_vi %>%
+  group_by(d1_diasbp_min   ) %>%
+  summarize(d1_diasbp_min    = mean(d1_diasbp_min   , na.rm = TRUE),hospital_death = mean(hospital_death , na.rm = TRUE)) %>%
+  ggplot(aes(d1_diasbp_min   ,hospital_death  )) +
+  geom_point() +
+  geom_smooth()
+
+# there is a very clear relationship where having a lower pressure means more chances of death
+
+#Testing the d1_diasbp_min on the random forest algorithm.
+
+fit_rf <- randomForest(hospital_death ~ age + ventilated_apache + temp_apache + d1_diasbp_min    , data = edx_train) 
+
+y_hat_rf <- predict(fit_rf, edx_test)
+
+mean(edx_test$hospital_death == y_hat_rf)
+
+sum(y_hat_rf == 1)
+
+
+#Testing the d1_diasbp_min on the C5.0Tree algorithm.
+
+fit_ct <- train(hospital_death ~ age +   temp_apache + ventilated_apache +  d1_diasbp_min  , data = edx_train, method = 'C5.0Tree' )
+
+y_hat_ct <- predict(fit_ct, edx_test)
+
+mean(edx_test$hospital_death == y_hat_ct)
+
+sum(y_hat_ct == 1)
+
+
+
+#Testing the d1_diasbp_min on the gamLoess algorithm.
+
+fit_gam <- train(hospital_death ~ age  + temp_apache + ventilated_apache + d1_diasbp_min          ,  data = edx_train, method = 'gamLoess' )
+
+y_hat_gam <- predict(fit_gam, edx_test)
+
+mean(edx_test$hospital_death == y_hat_gam)
+
+sum(y_hat_gam == 1)
+
+
+# the heart rate is always a determining factor in the death of a person
+
+Survival_Prediction_vi %>%
+  group_by(d1_heartrate_min ) %>%
+  summarize(d1_heartrate_min  = mean(d1_heartrate_min ),hospital_death = mean(hospital_death , na.rm = TRUE)) %>%
+  ggplot(aes(d1_heartrate_min ,hospital_death , group =d1_heartrate_min   )) +
+  geom_point() + 
+  geom_smooth()
+
+#how to see having a very low or very high ratio has a high influence on hospital death.
+
+#Testing the d1_heartrate_min on the random forest algorithm.
+
+fit_rf <- randomForest(hospital_death ~ age + ventilated_apache + temp_apache + d1_diasbp_min + d1_heartrate_min , data = edx_train) 
+
+y_hat_rf <- predict(fit_rf, edx_test)
+
+mean(edx_test$hospital_death == y_hat_rf)
+
+sum(y_hat_rf == 1)
+
+
+#Testing the d1_heartrate_min on the C5.0Tree algorithm.
+
+
+fit_ct <- train(hospital_death ~ age +   temp_apache + ventilated_apache +  d1_diasbp_min + d1_heartrate_min   , data = edx_train , method = 'C5.0Tree' )
+
+y_hat_ct <- predict(fit_ct, edx_test)
+
+mean(edx_test$hospital_death == y_hat_ct)
+
+sum(y_hat_ct == 1)
+
+
+
+#Testing the d1_heartrate_min on the gamLoess algorithm.
+
+fit_gam <- train(hospital_death ~ age  + temp_apache + ventilated_apache + d1_diasbp_min   + d1_heartrate_min    ,  data = edx_train, method = 'gamLoess' )
+
+y_hat_gam <- predict(fit_gam, edx_test)
+
+mean(edx_test$hospital_death == y_hat_gam)
+
+sum(y_hat_gam == 1)
+
+
+
+# SpO2 stands for Saturation of peripheral Oxyge, used to estimate the oxygen saturation of arterial blood .
+# can max oxygen saturation have an impact on in-hospital death.
+
+Survival_Prediction_vi %>%
+  group_by(d1_spo2_max  ) %>%
+  summarize(d1_spo2_max   = mean(d1_spo2_max  ),hospital_death = mean(hospital_death , na.rm = TRUE)) %>%
+  ggplot(aes(d1_spo2_max  ,hospital_death  )) +
+  geom_point() + 
+  geom_smooth()
+
+#Testing the d1_spo2_max on the random forest algorithm.
+
+fit_rf <- randomForest(hospital_death ~ age + ventilated_apache + temp_apache + d1_diasbp_min + d1_heartrate_min  + d1_spo2_max  , data = edx_train) 
+
+
+y_hat_rf <- predict(fit_rf, edx_test)
+
+mean(edx_test$hospital_death == y_hat_rf)
+
+sum(y_hat_rf == 1)
+
+
+#Testing the d1_spo2_max on the C5.0Tree algorithm.
+
+
+fit_ct <- train(hospital_death ~ age +   temp_apache + ventilated_apache +  d1_diasbp_min + d1_heartrate_min +  d1_spo2_max  , data = edx_train , method = 'C5.0Tree')
+
+y_hat_ct <- predict(fit_ct, edx_test)
+
+mean(edx_test$hospital_death == y_hat_ct)
+
+sum(y_hat_ct == 1)
+
+#Testing the d1_spo2_max on the gamLoess algorithm.
+
+
+fit_gam <- train(hospital_death ~ age  + temp_apache + ventilated_apache + d1_diasbp_min   + d1_heartrate_min  + d1_spo2_max       ,  data = edx_train, method = 'gamLoess' )
+
+y_hat_gam <- predict(fit_gam, edx_test)
+
+mean(edx_test$hospital_death == y_hat_gam)
+
+sum(y_hat_gam == 1)
+
+
+# can min oxygen saturation have an impact on in-hospital death?.
+
+Survival_Prediction_vi %>%
+  group_by(d1_spo2_min    ) %>%
+  summarize(d1_spo2_min   = mean(d1_spo2_min  ),hospital_death = mean(hospital_death , na.rm = TRUE)) %>%
+  ggplot(aes(d1_spo2_min  ,hospital_death  )) +
+  geom_point() + 
+  geom_smooth()
+
+# there is a very strong relationship between the lower the oxygen saturation, the higher the chances of dying 
+
+#Testing the d1_spo2_min on the random forest algorithm.
+
+fit_rf <- randomForest(hospital_death ~ age + ventilated_apache + temp_apache + d1_diasbp_min + d1_heartrate_min  + d1_spo2_max +d1_spo2_min   , data = edx_train) 
+
+
+y_hat_rf <- predict(fit_rf, edx_test)
+
+mean(edx_test$hospital_death == y_hat_rf)
+
+sum(y_hat_rf == 1)
+
+
+#Testing the d1_spo2_min on the C5.0Tree algorithm.
+
+fit_ct <- train(hospital_death ~ age +   temp_apache + ventilated_apache +  d1_diasbp_min + d1_heartrate_min  +  d1_spo2_max + d1_spo2_min  , data = edx_train , method = 'C5.0Tree')
+
+y_hat_ct <- predict(fit_ct, edx_test)
+
+mean(edx_test$hospital_death == y_hat_ct)
+
+sum(y_hat_ct == 1)
+
+
+#Testing the d1_spo2_min on the gamLoess algorithm.
+
+fit_gam <- train(hospital_death ~ age  + temp_apache + ventilated_apache + d1_diasbp_min   + d1_heartrate_min  + d1_spo2_max  + d1_spo2_min     ,  data = edx_train, method = 'gamLoess' )
+
+y_hat_gam <- predict(fit_gam, edx_test)
+
+mean(edx_test$hospital_death == y_hat_gam)
+
+sum(y_hat_gam == 1)
+
+
+# sysbp or Systolic blood pressure s the pressure exerted when the heart beats and blood is ejected into the arteries.
+
+Survival_Prediction_vi %>%
+  group_by(d1_sysbp_noninvasive_max  ) %>%
+  summarize(d1_sysbp_noninvasive_max   = mean(d1_sysbp_noninvasive_max  ),hospital_death = mean(hospital_death , na.rm = TRUE)) %>%
+  ggplot(aes(d1_sysbp_noninvasive_max  ,hospital_death  )) +
+  geom_point() +
+  geom_smooth()
+
+
+
+#Testing the d1_sysbp_noninvasive_max on the random forest algorithm.
+
+
+fit_rf <- randomForest(hospital_death ~ age + ventilated_apache + temp_apache + d1_diasbp_min + d1_heartrate_min + d1_spo2_max +d1_spo2_min  + d1_sysbp_noninvasive_max , data = edx_train) 
+
+
+y_hat_rf <- predict(fit_rf, edx_test)
+
+mean(edx_test$hospital_death == y_hat_rf)
+
+sum(y_hat_rf == 1)
+
+
+#Testing the d1_sysbp_noninvasive_max on the C5.0Tree algorithm.
+
+fit_ct <- train(hospital_death ~ age +   temp_apache + ventilated_apache +  d1_diasbp_min + d1_heartrate_min +  d1_spo2_max + d1_spo2_min + d1_sysbp_noninvasive_max , data = edx_train , method = 'C5.0Tree')
+
+y_hat_ct <- predict(fit_ct, edx_test)
+
+mean(edx_test$hospital_death == y_hat_ct)
+
+sum(y_hat_ct == 1)
+
+#Testing the d1_sysbp_noninvasive_max on the gamLoess algorithm.
+
+fit_gam <- train(hospital_death ~ age  + temp_apache + ventilated_apache + d1_diasbp_min   + d1_heartrate_min  + d1_spo2_max  + d1_spo2_min  + d1_sysbp_noninvasive_max    ,  data = edx_train, method = 'gamLoess' )
+
+y_hat_gam <- predict(fit_gam, edx_test)
+
+mean(edx_test$hospital_death == y_hat_gam)
+
+sum(y_hat_gam == 1)
+
+
+# The temperature of people is a great factor to analyze to detect diseases, could this parameter be fatal?.
+
+Survival_Prediction_vi %>%
+  group_by(d1_temp_max ) %>%
+  summarize(d1_temp_max  = mean(d1_diasbp_min),hospital_death = mean(hospital_death , na.rm = TRUE)) %>%
+  ggplot(aes(d1_temp_max ,hospital_death  )) +
+  geom_point()
+
+#Testing the d1_temp_max on the random forest algorithm.
+
+fit_rf <- randomForest(hospital_death ~ age + ventilated_apache + temp_apache + d1_diasbp_min + d1_heartrate_min  + d1_spo2_max +d1_spo2_min  + d1_sysbp_noninvasive_max +d1_temp_max  , data = edx_train) 
+
+
+y_hat_rf <- predict(fit_rf, edx_test)
+
+mean(edx_test$hospital_death == y_hat_rf)
+
+sum(y_hat_rf == 1)
+
+
+#Testing the d1_temp_max on the C5.0Tree algorithm.
+
+
+fit_ct <- train(hospital_death ~ age +   temp_apache + ventilated_apache +  d1_diasbp_min + d1_heartrate_min  +  d1_spo2_max + d1_spo2_min  + d1_sysbp_noninvasive_max + d1_temp_max , data = edx_train , method = 'C5.0Tree')
+
+y_hat_ct <- predict(fit_ct, edx_test)
+
+mean(edx_test$hospital_death == y_hat_ct)
+
+sum(y_hat_ct == 1)
+
+#Testing the d1_temp_max on the gamLoess algorithm.
+
+fit_gam <- train(hospital_death ~ age  + temp_apache + ventilated_apache + d1_diasbp_min   + d1_heartrate_min + d1_spo2_max  + d1_spo2_min  + d1_sysbp_noninvasive_max  + d1_temp_max   ,  data = edx_train, method = 'gamLoess' )
+
+y_hat_gam <- predict(fit_gam, edx_test)
+
+mean(edx_test$hospital_death == y_hat_gam)
+
+sum(y_hat_gam == 1)
+
+# glucose level is always a factor analyzed by doctors.
+
+Survival_Prediction_vi %>%
+  group_by(d1_glucose_min  ) %>%
+  summarize(d1_glucose_min   = mean(h1_heartrate_min),hospital_death = mean(hospital_death , na.rm = TRUE)) %>%
+  ggplot(aes(d1_glucose_min  ,hospital_death  )) +
+  geom_point() +
+  geom_smooth()
+
+# There seems to be some relationship between glucose level and hospital death.
+
+#Testing the d1_glucose_min on the random forest algorithm.
+
+fit_rf <- randomForest(hospital_death ~ age + ventilated_apache + temp_apache + d1_diasbp_min + d1_heartrate_min  + d1_spo2_max +d1_spo2_min  + d1_sysbp_noninvasive_max +d1_temp_max + d1_glucose_min, data = edx_train) 
+
+
+y_hat_rf <- predict(fit_rf, edx_test)
+
+mean(edx_test$hospital_death == y_hat_rf)
+
+sum(y_hat_rf == 1)
+
+#Testing the d1_glucose_min on the C5.0Tree algorithm.
+
+fit_ct <- train(hospital_death ~ age +   temp_apache + ventilated_apache +  d1_diasbp_min + d1_heartrate_min  +  d1_spo2_max + d1_spo2_min + d1_sysbp_noninvasive_max + d1_temp_max + d1_glucose_min   , data = edx_train , method = 'C5.0Tree')
+
+y_hat_ct <- predict(fit_ct, edx_test)
+
+mean(edx_test$hospital_death == y_hat_ct)
+
+sum(y_hat_ct == 1)
+
+
+#Testing the d1_glucose_min on the gamLoess algorithm.
+
+fit_gam <- train(hospital_death ~ age  + temp_apache + ventilated_apache + d1_diasbp_min   + d1_heartrate_min  + d1_spo2_max  + d1_spo2_min  + d1_sysbp_noninvasive_max  + d1_temp_max + d1_glucose_min        ,  data = edx_train, method = 'gamLoess' )
+
+y_hat_gam <- predict(fit_gam, edx_test)
+
+mean(edx_test$hospital_death == y_hat_gam)
+
+sum(y_hat_gam == 1)
+
+#  lack of minerals and poor diet can have an effect on people's health.
+
+Survival_Prediction_vi %>%
+  group_by(d1_potassium_min ) %>%
+  summarize(d1_potassium_min  = mean(d1_potassium_min ),hospital_death = mean(hospital_death , na.rm = TRUE)) %>%
+  ggplot(aes(d1_potassium_min ,hospital_death  )) +
+  geom_point() 
+
+#  the points are scattered appearing to be unrelated.
+
+#Testing the d1_potassium_min on the random forest algorithm.
+
+
+fit_rf <- randomForest(hospital_death ~ age + ventilated_apache + temp_apache + d1_diasbp_min + d1_heartrate_min + d1_spo2_max +d1_spo2_min  + d1_sysbp_noninvasive_max +d1_temp_max + d1_glucose_min +d1_potassium_min , data = edx_train) 
+
+
+y_hat_rf <- predict(fit_rf, edx_test)
+
+mean(edx_test$hospital_death == y_hat_rf)
+
+sum(y_hat_rf == 1)
+
+#Testing the d1_potassium_min on the C5.0Tree algorithm.
+
+fit_ct <- train(hospital_death ~ age +   temp_apache + ventilated_apache +  d1_diasbp_min + d1_heartrate_min  +  d1_spo2_max + d1_spo2_min + d1_sysbp_noninvasive_max + d1_temp_max + d1_glucose_min + d1_potassium_min    , data = edx_train , method = 'C5.0Tree')
+
+y_hat_ct <- predict(fit_ct, edx_test)
+
+mean(edx_test$hospital_death == y_hat_ct)
+
+sum(y_hat_ct == 1)
+
+
+#Testing the d1_potassium_min on the gamLoess algorithm.
+
+fit_gam <- train(hospital_death ~ age  + temp_apache + ventilated_apache + d1_diasbp_min   + d1_heartrate_min + d1_spo2_max  + d1_spo2_min  + d1_sysbp_noninvasive_max  + d1_temp_max + d1_glucose_min  + d1_potassium_min      ,  data = edx_train, method = 'gamLoess' )
+
+y_hat_gam <- predict(fit_gam, edx_test)
+
+mean(edx_test$hospital_death == y_hat_gam)
+
+sum(y_hat_gam == 1)
+
+
+
+
+# Our intuition says that people who have AIDS are more likely to die. Is this true? 
+
+Survival_Prediction_vi %>%
+  group_by(aids) %>%
+  summarize(aids = mean(aids),hospital_death = mean(hospital_death , na.rm = TRUE)) %>%
+  ggplot(aes(aids,hospital_death  )) +
+  geom_col()
+
+# as we can see people who have AIDS have a little more chance of having a hospital death.
+
+#Testing the aids parameter on the random forest algorithm.
+
+
+fit_rf <- randomForest(hospital_death ~ age + ventilated_apache + temp_apache + d1_diasbp_min + d1_heartrate_min  + d1_spo2_max +d1_spo2_min  + d1_sysbp_noninvasive_max +d1_temp_max + d1_glucose_min +d1_potassium_min  + aids, data = edx_train) 
+
+
+y_hat_rf <- predict(fit_rf, edx_test)
+
+mean(edx_test$hospital_death == y_hat_rf)
+
+sum(y_hat_rf == 1)
+
+
+#Testing the aids parameter on the C5.0Tree algorithm.
+
+
+fit_ct <- train(hospital_death ~ age +   temp_apache + ventilated_apache +  d1_diasbp_min + d1_heartrate_min +  d1_spo2_max + d1_spo2_min + d1_sysbp_noninvasive_max + d1_temp_max + d1_glucose_min + d1_potassium_min  + aids        , data = edx_train , method = 'C5.0Tree')
+
+y_hat_ct <- predict(fit_ct, edx_test)
+
+mean(edx_test$hospital_death == y_hat_ct)
+
+sum(y_hat_ct == 1)
+
+
+
+#Testing the aids parameter on the gamLoess algorithm.
+
+fit_gam <- train(hospital_death ~ age  + temp_apache + ventilated_apache + d1_diasbp_min   + d1_heartrate_min  + d1_spo2_max  + d1_spo2_min  + d1_sysbp_noninvasive_max  + d1_temp_max + d1_glucose_min  + d1_potassium_min + aids      ,  data = edx_train, method = 'gamLoess' )
+
+y_hat_gam <- predict(fit_gam, edx_test)
+
+mean(edx_test$hospital_death == y_hat_gam)
+
+sum(y_hat_gam == 1)
+
+
+
+# Results : In this section we are going to use the validation set as our final test and see what algorithm had the best perfomance and the highest mean.
+
+
+# Testing our final model of the random forest function on the validation set.
+
+fit_rf <- train(hospital_death ~ age + weight + d1_heartrate_max  + d1_potassium_max + height + d1_glucose_max + d1_glucose_min + h1_sysbp_noninvasive_min  + h1_sysbp_noninvasive_max + gcs_eyes_apache  + gcs_motor_apache  + gcs_verbal_apache + heart_rate_apache + intubated_apache + map_apache + resprate_apache + temp_apache + d1_diasbp_min + h1_heartrate_min + d1_mbp_noninvasive_max + aids  + cirrhosis + solid_tumor_with_metastasis             , data = edx_train, method = 'glm') 
+
+
+y_hat_rf <- predict(fit_rf, validation)
+
+
+mean(validation$hospital_death == y_hat_rf)
+
+
+
+# Testing our final model of the C5.0Tree on the validation set.
+
+y_hat_ct <- predict(fit_ct, validation)
+
+mean(validation$hospital_death == y_hat_ct)
+
+
+# Testing our final model of the gamloess on the validation set.
+
+y_hat_gam <- predict(fit_gam, validation)
+
+mean(validation$hospital_death == y_hat_gam)
+
+
+
+
+# Conclusions : 
+
+# The random forest got higher mean but it only limitation is that is very slow to run.
+
+# The cs50tree surprisingly doesn't obtain a good perform and a decent mean.
+
+# The gamloess algorithm had the second best average of all, but  it was very fast to run.
+
+
+# that an algorithm finds a predictor that increases its mean does not mean that in other algorithms it has the same result, for example we have the c50tree and the gamloess.
+
+
+# In a future work we can use more columns of the data table or continue improving the parameters with computers that can support large amounts of information.
